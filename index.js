@@ -21,4 +21,21 @@ module.exports = async function(context, mySbMsg) {
     const keys = await redis.keys('*')
     context.log('keys', keys);
 
+  balance = parseFloat(await redis.get(mySbMsg.user_id))
+  context.log("current balance" + balance)
+  switch (mySbMsg.action) {
+    case "spending":
+      amount = balance - parseFloat(mySbMsg.amount);
+      write = redis.set(mySbMsg.user_id, amount);
+      context.log('Spending, new amount :'+ amount);
+      break;
+    case "payment":
+      amount = balance + parseFloat(mySbMsg.amount);
+      write = redis.set(mySbMsg.user_id, amount);
+      context.log('Payment, new amount :'+ amount);
+      break;
+    default:
+      console.log(`Sorry`);
+  }
+
 };
