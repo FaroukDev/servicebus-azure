@@ -17,4 +17,8 @@ module.exports = async function(context, mySbMsg) {
     write = redis.set(mySbMsg.user_id, mySbMsg.amount); 
     user_sum = redis.get(mySbMsg.user_id);
 
+    // List of user in database
+    const keys = await redis.keys('*')
+    context.log('keys', keys);
+
 };
