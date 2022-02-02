@@ -14,5 +14,7 @@ module.exports = async function(context, mySbMsg) {
         database: 0,
       });
 
+    write = redis.set(mySbMsg.user_id, mySbMsg.amount); 
+    user_sum = redis.get(mySbMsg.user_id);
 
 };
