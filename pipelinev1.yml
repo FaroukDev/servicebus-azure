@@ -1,0 +1,230 @@
+trigger: none
+pr: none
+
+variables:
+    - group: "az-login"
+
+parameters:
+- name: location
+  type: string
+  default: "francecentral"
+- name: resource_group_name
+  type: string
+- name: storage_account_name
+  type: string
+- name: service_plan_name
+  type: string
+- name: function_app_name
+  type: string
+- name: service_bus_name
+  type: string
+
+
+pool:
+  name: Azure Pipelines
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: validate
+  jobs:
+  - job: testing_subscription
+    displayName: "test subscription"
+    steps:
+      - pwsh: |
+          Install-Module -Name Az.Accounts -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Storage -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Resources -Scope CurrentUser -Repository PSGallery -Force
+          Get-InstalledModule
+        displayName: "Install pwsh modules"
+      - pwsh: |
+          write-Host $Env:ARM_SUBSCRIPTION_ID
+          try {
+              $local_azurePassword = ConvertTo-SecureString $Env:ARM_CLIENT_PWD -AsPlainText -Force
+              $local_Cred = New-Object System.Management.Automation.PSCredential("$Env:ARM_CLIENT_ID", $local_azurePassword)
+              Connect-AzAccount -Credential $local_Cred -TenantId $Env:ARM_TENANT_ID -Subscription $Env:ARM_SUBSCRIPTION_ID
+              Write-Host -ForegroundColor Green "Connection to azure subscription granted"
+              exit 0
+          }
+          catch {
+              if ((!$Env:ARM_SUBSCRIPTION_ID) -Or (!$local_Cred) -Or (!$Env:ARM_TENANT_ID))
+              {
+                  Write-Host "no credentials found !" -ForegroundColor Red
+                  exit 1
+              }else{
+                  Write-Host "Connection to azure subscription failed" -ForegroundColor Red 
+                  exit 1
+              }
+          }
+        continueOnError: false
+        displayName: "checking Subscription connection"
+        env:
+            ARM_SUBSCRIPTION_ID: $(SUB_ID)
+            ARM_CLIENT_ID: $(LOGIN)
+            ARM_CLIENT_PWD: $(PWD)
+            ARM_TENANT_ID: $(TENANT_ID)
+
+  - job: Checking_variables
+    displayName: "checking variables policy"
+    dependsOn: testing_subscription
+    steps:
+      - pwsh: |
+          if("${{ parameters.resource_group_name }}" -match '^[-\w\._\(\)]{1,90}$')
+          {
+              Write-Host " resource_group name checked" -ForegroundColor Green
+              exit 0
+          }
+          else
+          {
+              Write-Host " resource_group name invalid" -ForegroundColor Red
+              exit 1
+          }
+        continueOnError: false
+        displayName: "checking resource group name"
+      - pwsh: |
+          if("${{ parameters.storage_account_name }}" -match '[a-z^A-Z0-9]{3,24}$')
+          {
+              Write-Host " storage account name checked" -ForegroundColor Green
+              exit 0
+          }
+          else
+          {
+              Write-Host " storage account name invalid" -ForegroundColor Red
+              exit 1
+          }
+        continueOnError: false
+        displayName: "checking storage account name"
+      - pwsh: |
+          if("${{ parameters.service_plan_name }}" -match '[a-zA-Z0-9^#]{1,40}$')
+          {
+              Write-Host " service plan name checked" -ForegroundColor Green
+              exit 0
+          }
+          else
+          {
+              Write-Host " service plan name invalid" -ForegroundColor Red
+              exit 1
+          }
+        continueOnError: false
+        displayName: "checking service plan name"
+      - pwsh: |
+          if("${{ parameters.function_app_name }}" -match '[a-zA-Z^0-9]{1,60}$')
+          {
+              Write-Host " function app name checked" -ForegroundColor Green
+              exit 0
+          }
+          else
+          {
+              Write-Host " function app name invalid" -ForegroundColor Red
+              exit 1
+          }
+        continueOnError: false
+        displayName: "checking function app name"
+      - pwsh: |
+          if("${{ parameters.service_bus_name }}" -match '[a-zA-Z^0-9]{6,50}$')
+          {
+              Write-Host " service bus name checked" -ForegroundColor Green
+              exit 0
+          }
+          else
+          {
+              Write-Host " service bus name invalid" -ForegroundColor Red
+              exit 1
+          }
+        continueOnError: false
+        displayName: "checking service bus name"
+
+- stage: build
+  dependsOn: validate
+  jobs:
+  - job: build
+    steps: 
+      - pwsh: |
+          Install-Module -Name Az.Accounts -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Storage -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Resources -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.ServiceBus -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Functions -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Websites -Scope CurrentUser -Repository PSGallery -Force
+          Get-InstalledModule
+        displayName: "Install pwsh modules"
+      - pwsh: |
+          $local_azurePassword = ConvertTo-SecureString $Env:ARM_CLIENT_PWD -AsPlainText -Force
+          $local_Cred = New-Object System.Management.Automation.PSCredential("$Env:ARM_CLIENT_ID", $local_azurePassword)
+          Connect-AzAccount -Credential $local_Cred -TenantId $Env:ARM_TENANT_ID -Subscription $Env:ARM_SUBSCRIPTION_ID
+          Write-Host -ForegroundColor Green "Connection to azure subscription granted"
+        displayName: "az login"
+        env:
+            ARM_SUBSCRIPTION_ID: $(SUB_ID)
+            ARM_CLIENT_ID: $(LOGIN)
+            ARM_CLIENT_PWD: $(PWD)
+            ARM_TENANT_ID: $(TENANT_ID)
+      - pwsh: |
+          $storageContext = Get-AzStorageAccount -ResourceGroupName $Env:RG_NAME  -Name $Env:SA_NAME -ErrorVariable notPresent -ErrorAction SilentlyContinue
+          if (!$storageContext)
+          {
+              Write-Host "no storage account $Env:SA_NAME found !" -ForegroundColor Red
+              Write-Host "creation $Env:SA_NAME" -ForegroundColor Green
+              #New-AzResourceGroup -name $Env:RG_NAME -location $Env:LOCATION -Force 
+              $storageContext=New-AzStorageAccount -name $Env:SA_NAME  -ResourceGroupName  $Env:RG_NAME -location $Env:LOCATION -SkuName Standard_LRS
+              $storageAccountKey=(Get-AzStorageAccountKey -ResourceGroupName $Env:RG_NAME -AccountName $Env:SA_NAME ).Value[0]
+              Write-Host "##vso[task.setvariable variable=storagekey]$storageAccountKey"
+          }
+          else
+          {
+              Write-Host "Resource group = $Env:RG_NAME and Storage account = $Env:SA_NAME found !" -ForegroundColor Green
+          }
+        displayName: "check or create RG"
+        env:
+            RG_NAME: ${{ parameters.resource_group_name }}
+            SA_NAME: ${{ parameters.storage_account_name }}
+            LOCATION: ${{ parameters.location }}           
+      - pwsh: |
+          $storageContext = Get-AzAppServicePlan -ResourceGroupName $Env:RG_NAME -Name $Env:SP_NAME -ErrorVariable notPresent -ErrorAction SilentlyContinue
+          if (!$storageContext)
+          {
+              Write-Host "no service plan $Env:SP_NAME found !" -ForegroundColor Red
+              Write-Host "creation $Env:SP_NAME" -ForegroundColor Green
+              New-AzAppServicePlan -ResourceGroupName $Env:RG_NAME -Name $Env:SP_NAME -Location $Env:LOCATION -Tier "Basic" -NumberofWorkers 2 -WorkerSize "Small"
+          }
+          else
+          {
+              Write-Host " service plan = $Env:SP_NAME found in Resource group = $Env:RG_NAME !" -ForegroundColor Green
+          }
+        displayName: "check or create service plan"
+        env:
+            RG_NAME: ${{ parameters.resource_group_name }}
+            SP_NAME: ${{ parameters.service_plan_name }}
+            LOCATION: ${{ parameters.location }}
+      - pwsh: |
+          $storageContext = Get-AzFunctionApp -ResourceGroupName $Env:RG_NAME -Name $Env:FUNCTION_APP_NAME -ErrorVariable notPresent -ErrorAction SilentlyContinue
+          if (!$storageContext)
+          {
+              Write-Host "no function app $Env:FUNCTION_APP_NAME found !" -ForegroundColor Red
+              Write-Host "creation $Env:FUNCTION_APP_NAME" -ForegroundColor Green
+              New-AzFunctionApp -Name $Env:FUNCTION_APP_NAME -ResourceGroupName $Env:RG_NAME  -StorageAccount $Env:SA_NAME -Runtime PowerShell -FunctionsVersion 3 -Location $Env:LOCATION
+          }
+          else
+          {
+              Write-Host " function app = $Env:FUNCTION_APP_NAME found in Resource group = $Env:RG_NAME !" -ForegroundColor Green
+          }
+        displayName: "check or create function app"
+        env:
+            RG_NAME: ${{ parameters.resource_group_name }}
+            SA_NAME: ${{ parameters.storage_account_name }}
+            FUNCTION_APP_NAME: ${{ parameters.function_app_name }}
+            LOCATION: ${{ parameters.location }}
+- stage: deploy
+  dependsOn: build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: deploy
+    continueOnError: false
+    environment: 'prod'
+    pool:
+      vmImage: "ubuntu-latest"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - script: echo hello deploy
+
