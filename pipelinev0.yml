@@ -1,0 +1,69 @@
+trigger: none
+pr: none
+
+variables:
+    - group: "az-login"
+
+parameters:
+- name: name
+  type: string
+
+
+pool:
+  name: Azure Pipelines
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: validate
+  jobs:
+  - job: validate
+    displayName: "validate & test"
+    pool: 
+      vmImage: "ubuntu-latest"
+    steps:
+      - script: echo ${{ parameters.name }}
+      - pwsh: |
+          Install-Module -Name Az.Accounts -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Storage -Scope CurrentUser -Repository PSGallery -Force
+          Install-Module -Name Az.Resources -Scope CurrentUser -Repository PSGallery -Force
+          Get-InstalledModule
+        displayName: "Install pwsh modules"
+      - pwsh: |
+          write-Host $Env:ARM_SUBSCRIPTION_ID
+          try {
+              $local_azurePassword = ConvertTo-SecureString $Env:ARM_CLIENT_PWD -AsPlainText -Force
+              $local_Cred = New-Object System.Management.Automation.PSCredential("$Env:ARM_CLIENT_ID", $local_azurePassword)
+              Connect-AzAccount -Credential $local_Cred -TenantId $Env:ARM_TENANT_ID -Subscription $Env:ARM_SUBSCRIPTION_ID
+              Write-Host -ForegroundColor Green "Connection to azure subscription granted"
+          }
+          catch {
+              if ((!$Env:ARM_SUBSCRIPTION_ID) -Or (!$local_Cred) -Or (!$Env:ARM_TENANT_ID))
+              {
+                  Write-Host "no credentials found !" -ForegroundColor Red
+              }else{
+                  Write-Host "Connection to azure subscription failed" -ForegroundColor Red 
+              }
+          }
+        continueOnError: false
+        displayName: checking Subscription connection
+        env:
+            ARM_SUBSCRIPTION_ID: $(SUB_ID)
+            ARM_CLIENT_ID: $(LOGIN)
+            ARM_CLIENT_PWD: $(PWD)
+            ARM_TENANT_ID: $(TENANT_ID)
+
+- stage: deploy
+  dependsOn: validate
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: deploy
+    continueOnError: false
+    environment: 'prod'
+    pool:
+      vmImage: "ubuntu-latest"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - script: echo hello deploy
+
